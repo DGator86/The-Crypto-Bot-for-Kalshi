@@ -1,0 +1,37 @@
+# Configuration for The Crypto Bot for Kalshi
+
+# Data settings
+data:
+  exchange: "binance"
+  symbols:
+    - "BTC/USDT"
+    - "ETH/USDT"
+  timeframe: "1h"
+  history_days: 365
+
+# Feature engineering
+features:
+  version: "v1"
+  lookback_periods:
+    - 24
+    - 168
+    - 720
+
+# Model settings
+model:
+  type: "xgboost"
+  max_depth: 6
+  learning_rate: 0.1
+  n_estimators: 100
+  
+# Backtest settings
+backtest:
+  initial_capital: 10000.0
+  walkforward_windows: 12
+  train_test_split: 0.8
+
+# Trading settings
+trading:
+  max_position_size: 0.1
+  stop_loss: 0.02
+  take_profit: 0.05
