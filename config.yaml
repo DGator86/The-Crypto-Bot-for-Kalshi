@@ -1,0 +1,30 @@
+exchange: binance
+symbols:
+  - "BTC/USDT"
+  - "ETH/USDT"
+  - "SOL/USDT"
+timeframe: "15m"
+history_days: 365
+
+feature:
+  lookback_bars: 200
+
+label:
+  horizon_bars: 1
+  no_trade_band_bps: 30          # +/- 0.30% band => "no trade"
+  min_move_for_positive_bps: 30  # same as band (kept explicit)
+
+costs:
+  fee_bps: 10        # 0.10% per side (adjust for venue). We'll assume round-trip in sim.
+  slippage_bps: 5    # 0.05% total
+  spread_bps: 5      # 0.05% total
+
+walkforward:
+  train_days: 90
+  test_days: 7
+  step_days: 7
+
+strategy:
+  p_enter: 0.60        # trade only if prob(up) >= 0.60
+  long_only: true
+  risk_fraction: 0.10  # fraction of equity allocated per trade (simple)
