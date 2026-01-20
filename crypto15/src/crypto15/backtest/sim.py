@@ -39,7 +39,8 @@ class TradingSimulator:
         max_position_size: float = 0.1,
         stop_loss: float = 0.02,
         take_profit: float = 0.05,
-        commission: float = 0.001
+        commission: float = 0.001,
+        annualization_factor: float = 252
     ):
         """
         Initialize trading simulator.
@@ -50,12 +51,14 @@ class TradingSimulator:
             stop_loss: Stop loss as fraction (e.g., 0.02 = 2%)
             take_profit: Take profit as fraction
             commission: Trading commission as fraction
+            annualization_factor: Factor for annualizing returns (252 for daily, 252*24 for hourly)
         """
         self.initial_capital = initial_capital
         self.max_position_size = max_position_size
         self.stop_loss = stop_loss
         self.take_profit = take_profit
         self.commission = commission
+        self.annualization_factor = annualization_factor
     
     def simulate(
         self,
@@ -193,7 +196,7 @@ class TradingSimulator:
         # Sharpe ratio (annualized)
         returns = equity_curve.pct_change().dropna()
         if len(returns) > 0:
-            sharpe = np.sqrt(252) * returns.mean() / returns.std() if returns.std() > 0 else 0
+            sharpe = np.sqrt(self.annualization_factor) * returns.mean() / returns.std() if returns.std() > 0 else 0
             metrics['sharpe_ratio'] = sharpe
         else:
             metrics['sharpe_ratio'] = 0.0

@@ -96,6 +96,7 @@ class XGBModel:
             self.model.fit(
                 X, y,
                 eval_set=eval_set_formatted,
+                early_stopping_rounds=early_stopping_rounds,
                 verbose=False
             )
         else:
