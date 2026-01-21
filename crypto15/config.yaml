@@ -35,8 +35,10 @@ features:
   include_interactions: true
   target:
     horizon_bars: 1
-    classification_threshold: 0.0005
-    neutral_band: 0.0002
+    # Increased threshold to reduce false signals and trading frequency
+    # 0.0015 = 15 bps, more appropriate for 15m timeframe with fees
+    classification_threshold: 0.0015
+    neutral_band: 0.0005
 
 # Model settings
 model:
@@ -86,4 +88,26 @@ trading:
   take_profit: 0.06
   commission: 0.0005
   min_probability: 0.55
-  min_expected_return: 0.0005
+  # Increased min_expected_return to account for fees and slippage
+  min_expected_return: 0.001
+
+# Live trading settings
+live_trading:
+  mode: "paper"  # paper or live
+  interval_minutes: 15
+  initial_capital: 10000.0
+  max_daily_loss: 500.0
+  max_consecutive_losses: 5
+  # Kalshi API settings (optional, for live mode)
+  kalshi:
+    api_key: ""  # Set via environment variable KALSHI_API_KEY
+    private_key_path: ""  # Path to private key file
+    use_demo: true  # Use demo environment for testing
+
+# Hyperparameter tuning settings
+tuning:
+  n_trials: 50
+  timeout_seconds: 3600
+  n_cv_splits: 5
+  optimize_metric: "roc_auc"  # roc_auc, sharpe, f1, expectancy
+  purge_bars: 2
