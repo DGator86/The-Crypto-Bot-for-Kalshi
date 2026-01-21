@@ -33,6 +33,13 @@ import requests
 
 from joblib import dump, load
 from sklearn.pipeline import Pipeline
+
+from kalshi.fees import FeeSchedule
+from kalshi.orderbook import TopOfBook
+from strategy.ev import TradeEV
+from strategy.gates import GateConfig
+from strategy.policy import TradeDecision as PolicyTradeDecision, decide_trade as policy_decide_trade
+from strategy.sizing import SizingConfig
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.calibration import CalibratedClassifierCV
@@ -100,6 +107,16 @@ class MLConfig:
 
     # Live inference
     min_history_bars: int = 120  # need enough history for stable indicators
+
+
+@dataclass
+class KalshiPolicyConfig:
+    """Configuration bundle for the EV-based Kalshi execution policy."""
+
+    fee_schedule: FeeSchedule = FeeSchedule()
+    gate: GateConfig = GateConfig()
+    sizing: SizingConfig = SizingConfig()
+    is_maker: bool = False
 
 
 # ----------------------------
@@ -893,6 +910,19 @@ class AssetPredictor:
 # Multi-asset manager + Live Engine
 # ----------------------------
 
+
+def _ev_to_dict(ev: Optional[TradeEV]) -> Optional[Dict[str, float]]:
+    if ev is None:
+        return None
+    return {
+        "side": ev.side,
+        "price": float(ev.price),
+        "fee": float(ev.fee),
+        "ev": float(ev.ev),
+        "edge_vs_price": float(ev.edge_vs_price),
+    }
+
+
 class MultiAssetML:
     def __init__(self, cfg: MLConfig, provider: DataProvider):
         self.cfg = cfg
@@ -947,6 +977,53 @@ class MultiAssetML:
             }
         )
         return trade
+
+    def decide_trade_with_policy(
+        self,
+        symbol: str,
+        book: TopOfBook,
+        seconds_to_expiry: int,
+        bankroll: float,
+        *,
+        limit: int = 500,
+        policy_cfg: Optional[KalshiPolicyConfig] = None,
+    ) -> Dict[str, Any]:
+        if symbol not in self.models:
+            raise ValueError(f"No model loaded/trained for symbol={symbol}")
+
+        df = self.provider.fetch_ohlcv(symbol, self.cfg.timeframe, limit=limit).dropna()
+        if df.empty:
+            raise ValueError(f"No data returned for symbol={symbol} when generating trade signal.")
+
+        components = self.models[symbol].predict_components(df)
+        cfg = policy_cfg or KalshiPolicyConfig()
+        decision: PolicyTradeDecision = policy_decide_trade(
+            p_yes=float(components["probability_up"]),
+            book=book,
+            t_left_seconds=int(seconds_to_expiry),
+            bankroll=float(bankroll),
+            is_maker=bool(cfg.is_maker),
+            fee_schedule=cfg.fee_schedule,
+            gate_cfg=cfg.gate,
+            size_cfg=cfg.sizing,
+        )
+
+        return {
+            "symbol": symbol,
+            "timeframe": self.cfg.timeframe,
+            "timestamp_utc": str(df.index[-1]),
+            "probability_up": float(components["probability_up"]),
+            "prob_tree": float(components["prob_tree"]),
+            "prob_logit": float(components["prob_logit"]),
+            "regime": components["regime"],
+            "thresholds": components["thresholds"],
+            "vol_z": float(components["vol_z"]),
+            "policy_action": decision.action,
+            "policy_reason": decision.reason,
+            "policy_contracts": int(decision.contracts),
+            "policy_price": float(decision.price) if decision.price is not None else None,
+            "policy_ev": _ev_to_dict(decision.ev),
+        }
 
     def predict_and_signal(self, symbol: str, limit: int = 500) -> Dict[str, Any]:
         """
