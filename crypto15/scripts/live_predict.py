@@ -1,93 +1,79 @@
 #!/usr/bin/env python3
-"""
-Script to make live predictions using saved model.
-"""
+"""Generate live predictions using the trained look-ahead model."""
 
+import copy
+import math
 import sys
 from pathlib import Path
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from crypto15.config import get_data_config
-from crypto15.data import fetch_ohlcv
+from crypto15.config import get_data_config, get_feature_config, get_model_config
+from crypto15.data import build_lookahead_dataset
 from crypto15.features import create_features
-from crypto15.model import XGBModel
+from crypto15.model import LookaheadModel
 from crypto15.util import setup_logging
-
-import logging
-from datetime import datetime, timedelta
 
 logger = setup_logging()
 
 
 def main():
-    """Make live predictions using saved model."""
-    logger.info("Starting live prediction")
-    
-    # Load configuration
+    """Fetch latest data, score with look-ahead model, and emit trading signal."""
+    logger.info("Starting live look-ahead prediction")
+
     data_config = get_data_config()
-    
-    symbol = data_config.get('symbols', ['BTC/USDT'])[0]
-    timeframe = data_config.get('timeframe', '1h')
-    exchange = data_config.get('exchange', 'binance')
-    
-    # Load model
-    model_path = Path(__file__).parent.parent / "models"
-    model_file = model_path / f"{symbol.replace('/', '_')}_{timeframe}_model.pkl"
-    
+    feature_config = get_feature_config()
+    model_config = get_model_config()
+
+    primary_symbol = data_config['primary_symbol']
+    primary_id = data_config['primary_symbol_id']
+    target_tf = data_config.get('target_timeframe', '15m')
+
+    model_dir = Path(__file__).parent.parent / "models"
+    model_file = model_dir / f"{primary_id}_{target_tf}_lookahead.pkl"
+
     if not model_file.exists():
-        logger.error(f"Model file not found: {model_file}")
-        logger.error("Please run train_full_and_save.py first")
+        logger.error("Model file not found: %s", model_file)
+        logger.error("Please train the model with train_full_and_save.py before running live predictions")
         return
-    
-    logger.info(f"Loading model from {model_file}")
-    model = XGBModel.load(str(model_file))
-    
-    # Fetch recent data
-    logger.info(f"Fetching recent data for {symbol}")
-    since = datetime.now() - timedelta(days=60)  # Get 60 days of data for features
-    
-    df = fetch_ohlcv(
-        symbol=symbol,
-        timeframe=timeframe,
-        since=since,
-        limit=1440,  # ~60 days of hourly data
-        exchange_name=exchange
-    )
-    
-    # Create features
-    logger.info("Creating features")
-    df = create_features(df)
-    
-    # Get latest data point
-    latest = df.iloc[-1:]
-    latest_features = latest[model.feature_names]
-    
-    # Make prediction
-    prediction = model.predict(latest_features)[0]
-    
-    # Display results
-    current_price = df['close'].iloc[-1]
-    predicted_return = prediction
+
+    logger.info("Loading look-ahead model from %s", model_file)
+    model = LookaheadModel.load(str(model_file))
+
+    # Build a fresh dataset using a shorter live lookback window
+    live_history_hours = data_config.get('live', {}).get('history_hours', 96)
+    live_history_days = max(2, math.ceil(live_history_hours / 24))
+    live_data_config = copy.deepcopy(data_config)
+    live_data_config['history_days'] = live_history_days
+
+    dataset, _ = build_lookahead_dataset(live_data_config)
+    logger.info("Fetched %d rows of recent data for %s", len(dataset), primary_symbol)
+
+    features_df = create_features(dataset, config=feature_config)
+    latest_row = features_df.iloc[[-1]]
+
+    predictions = model.predict(latest_row)
+    latest_pred = predictions.iloc[0]
+
+    current_price = latest_row['primary_close'].iloc[0]
+    predicted_return = latest_pred['expected_return']
+    probability_up = latest_pred['probability_up']
+    signal = int(latest_pred['signal'])
+
     predicted_price = current_price * (1 + predicted_return)
-    
-    logger.info("=" * 60)
-    logger.info(f"Live Prediction for {symbol}")
-    logger.info("=" * 60)
-    logger.info(f"Current Time: {df.index[-1]}")
-    logger.info(f"Current Price: ${current_price:.2f}")
-    logger.info(f"Predicted Return: {predicted_return * 100:.2f}%")
-    logger.info(f"Predicted Price: ${predicted_price:.2f}")
-    
-    if predicted_return > 0:
-        logger.info("Signal: BUY / LONG")
-    elif predicted_return < 0:
-        logger.info("Signal: SELL / SHORT")
-    else:
-        logger.info("Signal: HOLD / NEUTRAL")
-    
-    logger.info("=" * 60)
+
+    logger.info("=" * 80)
+    logger.info("Live Look-Ahead Prediction for %s (%s)", primary_symbol, target_tf)
+    logger.info("Current Bar: %s", latest_row.index[-1])
+    logger.info("Current Price: %.2f", current_price)
+    logger.info("Expected Return (next %s): %.4f (%.2f%%)", target_tf, predicted_return, predicted_return * 100)
+    logger.info("Probability Up: %.2f%%", probability_up * 100)
+    logger.info("Expected Price: %.2f", predicted_price)
+    logger.info("Signal: %s", {1: 'LONG', -1: 'SHORT', 0: 'NEUTRAL'}.get(signal, 'NEUTRAL'))
+    logger.info("Expected Value: %.6f", latest_pred['expected_value'])
+    logger.info("=" * 80)
+
     logger.info("Live prediction completed")
 
 

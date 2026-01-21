@@ -26,6 +26,8 @@ ENV/
 
 # Data files
 data/
+!src/crypto15/data/
+!src/crypto15/data/**/*.py
 *.parquet
 *.csv
 *.pkl

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Script to fetch and save historical data.
+Script to fetch, merge, and persist historical datasets for the look-ahead model.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -10,47 +11,39 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from crypto15.config import get_data_config
-from crypto15.data import fetch_historical_data, save_data
+from crypto15.data import build_lookahead_dataset, save_data
 from crypto15.util import setup_logging
-
-import logging
+from crypto15.data.store import get_data_dir
 
 logger = setup_logging()
 
 
 def main():
-    """Fetch historical data and save to disk."""
-    logger.info("Starting historical data fetch")
-    
-    # Load configuration
-    config = get_data_config()
-    exchange = config.get('exchange', 'binance')
-    symbols = config.get('symbols', ['BTC/USDT'])
-    timeframe = config.get('timeframe', '1h')
-    history_days = config.get('history_days', 365)
-    
-    # Fetch data for each symbol
-    for symbol in symbols:
-        logger.info(f"Fetching {symbol} data...")
-        
-        try:
-            df = fetch_historical_data(
-                symbol=symbol,
-                timeframe=timeframe,
-                days=history_days,
-                exchange_name=exchange
-            )
-            
-            # Save data
-            filename = f"{symbol.replace('/', '_')}_{timeframe}"
-            save_data(df, filename, format='parquet')
-            
-            logger.info(f"Successfully fetched and saved {len(df)} records for {symbol}")
-        
-        except Exception as e:
-            logger.error(f"Error fetching {symbol}: {e}")
-    
-    logger.info("Historical data fetch completed")
+    """Fetch historical data, build the modeling dataset, and persist it."""
+    logger.info("Starting look-ahead dataset build")
+
+    data_config = get_data_config()
+
+    try:
+        dataset, metadata = build_lookahead_dataset(data_config)
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.exception("Failed to build dataset: %s", exc)
+        raise
+
+    primary_id = metadata['primary_symbol_id']
+    target_tf = metadata['target_timeframe']
+    filename = f"{primary_id}_{target_tf}_dataset"
+
+    save_data(dataset, filename, format='parquet')
+    logger.info("Saved dataset '%s' with %d rows and %d columns", filename, len(dataset), len(dataset.columns))
+
+    # Persist metadata alongside dataset for downstream scripts
+    data_dir = get_data_dir()
+    metadata_path = data_dir / f"{filename}_metadata.json"
+    metadata_path.write_text(json.dumps(metadata, indent=2))
+    logger.info("Wrote dataset metadata to %s", metadata_path)
+
+    logger.info("Historical dataset build completed")
 
 
 if __name__ == "__main__":
