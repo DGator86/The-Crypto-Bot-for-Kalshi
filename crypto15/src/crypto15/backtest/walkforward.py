@@ -19,7 +19,9 @@ class WalkForwardBacktest:
     def __init__(
         self,
         n_splits: int = 12,
-        train_ratio: float = 0.8
+        train_ratio: float = 0.8,
+        purge_ratio: float = 0.0,
+        embargo_ratio: float = 0.0,
     ):
         """
         Initialize walk-forward backtest.
@@ -27,9 +29,13 @@ class WalkForwardBacktest:
         Args:
             n_splits: Number of walk-forward splits
             train_ratio: Ratio of training data in each split
+            purge_ratio: Fraction of training data removed from the end to avoid leakage
+            embargo_ratio: Fraction of test data dropped from the start to provide embargo
         """
         self.n_splits = n_splits
         self.train_ratio = train_ratio
+        self.purge_ratio = purge_ratio
+        self.embargo_ratio = embargo_ratio
     
     def create_splits(self, df: pd.DataFrame) -> List[Dict[str, Any]]:
         """
@@ -102,6 +108,18 @@ class WalkForwardBacktest:
             # Get train and test data
             df_train = df.iloc[split['train_start']:split['train_end']]
             df_test = df.iloc[split['test_start']:split['test_end']]
+
+            purge_count = int(len(df_train) * self.purge_ratio)
+            if purge_count > 0 and len(df_train) > purge_count:
+                df_train = df_train.iloc[:-purge_count]
+
+            embargo_count = int(len(df_test) * self.embargo_ratio)
+            if embargo_count > 0 and len(df_test) > embargo_count:
+                df_test = df_test.iloc[embargo_count:]
+
+            if df_train.empty or df_test.empty:
+                logger.warning("Split %s skipped due to insufficient data after purge/embargo", split['split_id'])
+                continue
             
             # Train model
             model = train_func(df_train)
@@ -119,6 +137,8 @@ class WalkForwardBacktest:
                 'test_samples': len(df_test),
                 'metrics': metrics,
                 'predictions': predictions,
+                'train_indices': (split['train_start'], split['train_end']),
+                'test_indices': (split['test_start'], split['test_end']),
             })
             
             logger.info(f"Split {split['split_id']} completed: {metrics}")
@@ -145,8 +165,10 @@ class WalkForwardBacktest:
             metric_keys = all_metrics[0].keys()
             for key in metric_keys:
                 values = [m[key] for m in all_metrics if key in m]
-                summary[f'{key}_mean'] = np.mean(values)
-                summary[f'{key}_std'] = np.std(values)
+                if not values:
+                    continue
+                summary[f'{key}_mean'] = np.nanmean(values)
+                summary[f'{key}_std'] = np.nanstd(values)
         
         summary['n_splits'] = len(results)
         

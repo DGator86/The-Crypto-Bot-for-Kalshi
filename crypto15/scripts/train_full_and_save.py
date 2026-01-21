@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""
-Script to train model on full dataset and save.
-"""
+"""Train the look-ahead model on the full dataset and persist artifacts."""
 
 import sys
 from pathlib import Path
@@ -9,61 +7,66 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from crypto15.config import get_data_config, get_model_config
+from crypto15.config import get_data_config, get_feature_config, get_model_config
 from crypto15.data import load_data
 from crypto15.features import create_features
-from crypto15.model import XGBModel
+from crypto15.model import LookaheadModel
 from crypto15.util import setup_logging
-
-import logging
 
 logger = setup_logging()
 
 
 def main():
-    """Train model on full dataset and save."""
-    logger.info("Starting full model training")
-    
-    # Load configuration
+    """Train look-ahead model on full dataset and save."""
+    logger.info("Starting full model training for look-ahead predictions")
+
     data_config = get_data_config()
+    feature_config = get_feature_config()
     model_config = get_model_config()
-    
-    # Load data
-    symbol = data_config.get('symbols', ['BTC/USDT'])[0]
-    timeframe = data_config.get('timeframe', '1h')
-    filename = f"{symbol.replace('/', '_')}_{timeframe}"
-    
-    logger.info(f"Loading data for {symbol}")
-    df = load_data(filename)
-    
-    # Create features
-    logger.info("Creating features")
-    df = create_features(df)
-    
-    # Add target (next hour return)
-    df['target'] = df['close'].shift(-1) / df['close'] - 1
-    df = df.dropna()
-    
-    # Train model
-    logger.info("Training model on full dataset")
-    model = XGBModel(params=model_config)
-    X, y = model.prepare_data(df, target_col='target')
-    model.train(X, y)
-    
-    # Show feature importance
+
+    primary_symbol = data_config['primary_symbol']
+    primary_id = data_config['primary_symbol_id']
+    target_tf = data_config.get('target_timeframe', data_config.get('timeframe', '15m'))
+    dataset_name = f"{primary_id}_{target_tf}_dataset"
+
+    logger.info("Loading dataset %s", dataset_name)
+    df = load_data(dataset_name)
+
+    logger.info("Engineering features (version %s)", feature_config.get('version', 'v1'))
+    df_features = create_features(df, config=feature_config)
+    logger.info("Feature matrix size: %d rows, %d columns", len(df_features), len(df_features.columns))
+
+    model = LookaheadModel(config=model_config)
+    model.train(df_features)
+
+    # Evaluate on holdout portion if configured
+    test_size = model_config.get('training', {}).get('test_size', 0.2)
+    if 0 < test_size < 1:
+        split_idx = int(len(df_features) * (1 - test_size))
+        holdout_df = df_features.iloc[split_idx:]
+        scores = model.evaluate_holdout(holdout_df)
+        if scores:
+            logger.info("Holdout metrics:")
+            for key, value in scores.items():
+                logger.info("  %s: %.4f", key, value)
+
     importance = model.get_feature_importance()
-    logger.info("Top 10 important features:")
+    logger.info("Top 10 combined feature importances:")
     for _, row in importance.head(10).iterrows():
-        logger.info(f"  {row['feature']}: {row['importance']:.4f}")
-    
-    # Save model
-    model_path = Path(__file__).parent.parent / "models"
-    model_path.mkdir(exist_ok=True)
-    model_file = model_path / f"{symbol.replace('/', '_')}_{timeframe}_model.pkl"
-    
+        logger.info(
+            "  %s: reg=%.4f cls=%.4f", row['feature'], row['importance_regression'], row['importance_classification']
+        )
+
+    models_dir = Path(__file__).parent.parent / "models"
+    models_dir.mkdir(exist_ok=True)
+    model_file = models_dir / f"{primary_id}_{target_tf}_lookahead.pkl"
     model.save(str(model_file))
-    logger.info(f"Model saved to {model_file}")
-    
+
+    importance_file = models_dir / f"{primary_id}_{target_tf}_feature_importance.csv"
+    importance.to_csv(importance_file, index=False)
+    logger.info("Persisted feature importance to %s", importance_file)
+
+    logger.info("Model saved to %s", model_file)
     logger.info("Full model training completed")
 
 

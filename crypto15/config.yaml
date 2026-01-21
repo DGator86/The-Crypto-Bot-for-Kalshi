@@ -4,34 +4,86 @@
 data:
   exchange: "binance"
   symbols:
-    - "BTC/USDT"
-    - "ETH/USDT"
-  timeframe: "1h"
+    primary: "BTC/USDT"
+    context:
+      - "ETH/USDT"
+  base_timeframe: "1m"
+  target_timeframe: "15m"
   history_days: 365
+  fetch:
+    limit: 1500
+    max_batches: 8000
+    sleep_seconds: 0.2
+  alt_data:
+    funding_rates: true
+    open_interest: true
+    perp_suffix: ":USDT"
+    include_context: false
+  live:
+    history_hours: 96
+    refresh_minutes: 15
 
 # Feature engineering
 features:
-  version: "v1"
-  lookback_periods:
-    - 24
-    - 168
-    - 720
+  version: "v2"
+  lookback_bars: [1, 2, 4, 8, 16, 32, 64, 96]
+  volatility_windows: [8, 16, 32, 96]
+  volume_windows: [4, 16, 64]
+  context_correlation_windows: [8, 32, 96]
+  include_intraday: true
+  include_regime: true
+  include_interactions: true
+  target:
+    horizon_bars: 1
+    classification_threshold: 0.0005
+    neutral_band: 0.0002
 
 # Model settings
 model:
-  type: "xgboost"
-  max_depth: 6
-  learning_rate: 0.1
-  n_estimators: 100
-  
+  type: "lookahead_xgboost"
+  classification_params:
+    max_depth: 4
+    learning_rate: 0.07
+    n_estimators: 600
+    subsample: 0.9
+    colsample_bytree: 0.8
+    gamma: 0.0
+    min_child_weight: 3
+  regression_params:
+    max_depth: 5
+    learning_rate: 0.05
+    n_estimators: 800
+    subsample: 0.85
+    colsample_bytree: 0.8
+    gamma: 0.0
+    min_child_weight: 2
+  training:
+    test_size: 0.2
+    early_stopping_rounds: 50
+    eval_metric_classification: "auc"
+    eval_metric_regression: "rmse"
+    random_state: 42
+  thresholds:
+    probability_long: 0.55
+    probability_short: 0.45
+    min_expected_return: 0.0005
+    neutral_absolute_return: 0.0002
+
 # Backtest settings
 backtest:
   initial_capital: 10000.0
   walkforward_windows: 12
   train_test_split: 0.8
+  purge_ratio: 0.02
+  embargo_ratio: 0.02
+  commission: 0.0005
+  annualization_factor: 35040
 
 # Trading settings
 trading:
-  max_position_size: 0.1
-  stop_loss: 0.02
-  take_profit: 0.05
+  max_position_size: 0.2
+  stop_loss: 0.03
+  take_profit: 0.06
+  commission: 0.0005
+  min_probability: 0.55
+  min_expected_return: 0.0005
