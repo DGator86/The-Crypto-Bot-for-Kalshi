@@ -512,7 +512,8 @@ def train_and_evaluate():
         total = bull_mask.sum() + bear_mask.sum()
         combined = (bull_acc * bull_mask.sum() + bear_acc * bear_mask.sum()) / max(total, 1)
 
-        print(f"  {threshold:.0%:^10s} | {bull_acc*100:^10.1f}% | {bear_acc*100:^10.1f}% | {combined*100:^10.1f}% | {total:^10d}")
+        thresh_str = f"{threshold*100:.0f}%"
+        print(f"  {thresh_str:^10s} | {bull_acc*100:^10.1f}% | {bear_acc*100:^10.1f}% | {combined*100:^10.1f}% | {total:^10d}")
 
     # Train final model
     print("\n" + "=" * 70)
